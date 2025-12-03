@@ -1,0 +1,5 @@
+{
+  "name": "CourseMaster AI",
+  "description": "Upload any course PDF to generate interactive quizzes or chat with your documents for targeted learning.",
+  "requestFramePermissions": []
+}
