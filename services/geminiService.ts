@@ -28,7 +28,7 @@ export const generateQuiz = async (base64Pdf: string, questionCount: number = 10
       type: Type.OBJECT,
       properties: {
         id: { type: Type.INTEGER },
-        topic: { type: Type.STRING, description: "The general topic or chapter this question belongs to." },
+        topic: { type: Type.STRING, description: "The general topic or chapter." },
         text: { type: Type.STRING, description: "The question text." },
         type: { type: Type.STRING, enum: [QuestionType.MULTIPLE_CHOICE, QuestionType.TRUE_FALSE] },
         options: { 
@@ -36,23 +36,20 @@ export const generateQuiz = async (base64Pdf: string, questionCount: number = 10
           items: { type: Type.STRING },
           description: "List of options. For True/False, provide ['True', 'False']."
         },
-        correctAnswerIndex: { type: Type.INTEGER, description: "The index of the correct answer in the options array (0-based)." },
-        explanation: { type: Type.STRING, description: "A brief explanation of why the correct answer is correct." }
+        correctAnswerIndex: { type: Type.INTEGER, description: "Correct answer index (0-based)." },
+        explanation: { type: Type.STRING, description: "Explanation of the answer." }
       },
       required: ["id", "topic", "text", "type", "options", "correctAnswerIndex", "explanation"]
     }
   };
 
   const prompt = `
-    Analyze the attached PDF document.
-    Generate a quiz with exactly ${questionCount} questions based STRICTLY on the content of the PDF.
+    Generate a quiz with exactly ${questionCount} questions based on the PDF.
     
-    CRITICAL INSTRUCTIONS:
-    1. Group the questions by TOPIC. Do not scatter topics randomly. 
-    2. Example: Questions 1-3 about "Introduction", Questions 4-6 about "Chapter 1", etc.
-    3. Mix Multiple Choice and True/False questions.
-    4. Ensure the questions vary in difficulty.
-    5. Provide a clear explanation for the correct answer.
+    RULES:
+    1. Group questions by TOPIC (e.g., Intro, Chapter 1).
+    2. Mix Multiple Choice and True/False.
+    3. Explanation MUST be extremely concise (max 15 words) to ensure speed.
   `;
 
   try {
@@ -67,7 +64,8 @@ export const generateQuiz = async (base64Pdf: string, questionCount: number = 10
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        temperature: 0.4
+        temperature: 0.2, // Lower temperature for faster, more deterministic output
+        thinkingConfig: { thinkingBudget: 0 } // STRICTLY 0 to meet "at most 3secs" requirement
       }
     });
 
@@ -94,42 +92,33 @@ export const analyzeQuizResults = async (
     const selectedIndex = userAnswer ? userAnswer.selectedOptionIndex : -1;
     const isCorrect = selectedIndex === q.correctAnswerIndex;
     return {
-      question: q.text,
       topic: q.topic,
-      correct: isCorrect,
-      userAnswer: selectedIndex >= 0 ? q.options[selectedIndex] : "No Answer",
-      correctAnswer: q.options[q.correctAnswerIndex]
+      correct: isCorrect
     };
   });
 
   const prompt = `
-    You are an expert tutor. A student just took a quiz based on the attached PDF.
-    Here is their performance data: ${JSON.stringify(performanceData)}.
-    
-    Analyze their performance. 
-    1. Calculate the score.
-    2. Identify strong and weak topics.
-    3. Provide specific advice on what to study in the PDF for the weak areas.
-    
-    Return the analysis in JSON format.
+    Analyze this student performance data on a PDF quiz: ${JSON.stringify(performanceData)}.
+    Return JSON with score, feedback, and topic breakdown. 
+    Keep advice short and actionable.
   `;
 
   const schema: Schema = {
     type: Type.OBJECT,
     properties: {
-      totalScore: { type: Type.INTEGER, description: "Percentage score (0-100)" },
+      totalScore: { type: Type.INTEGER },
       correctCount: { type: Type.INTEGER },
       totalQuestions: { type: Type.INTEGER },
-      feedback: { type: Type.STRING, description: "Overall encouraging feedback summary." },
+      feedback: { type: Type.STRING },
       topicBreakdown: {
         type: Type.ARRAY,
         items: {
           type: Type.OBJECT,
           properties: {
             topic: { type: Type.STRING },
-            score: { type: Type.INTEGER, description: "Percentage score for this topic" },
+            score: { type: Type.INTEGER },
             status: { type: Type.STRING, enum: ["Strength", "Weakness", "Average"] },
-            advice: { type: Type.STRING, description: "What to focus on regarding this topic." }
+            advice: { type: Type.STRING }
           },
           required: ["topic", "score", "status", "advice"]
         }
@@ -149,7 +138,9 @@ export const analyzeQuizResults = async (
       },
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema
+        responseSchema: schema,
+        temperature: 0.2,
+        thinkingConfig: { thinkingBudget: 0 } // Disabled for speed
       }
     });
 
@@ -172,16 +163,17 @@ export const chatWithPdf = async (base64Pdf: string, history: {role: string, par
       history: [
         {
             role: "user",
-            parts: [{ inlineData: { mimeType: 'application/pdf', data: base64Pdf } }, { text: "Use this PDF as the context for all future answers. Answer ONLY based on this document." }]
+            parts: [{ inlineData: { mimeType: 'application/pdf', data: base64Pdf } }, { text: "Context provided." }]
         },
         {
             role: "model",
-            parts: [{ text: "Understood. I will answer your questions based solely on the provided PDF document." }]
+            parts: [{ text: "Ready." }]
         },
         ...history
       ],
       config: {
-        systemInstruction: "You are a helpful teaching assistant. Answer the user's questions based strictly on the provided PDF context. If the answer is not in the document, politely state that you cannot find the information in the provided source.",
+        systemInstruction: "You are a concise tutor. Answer directly based on the PDF. Keep answers short unless asked otherwise.",
+        thinkingConfig: { thinkingBudget: 0 }
       }
     });
 

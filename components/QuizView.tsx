@@ -9,11 +9,6 @@ interface QuizViewProps {
   onExit: () => void;
 }
 
-interface TopicGroup {
-  name: string;
-  questions: QuizQuestion[];
-}
-
 export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileName, onComplete, onExit }) => {
   // Group questions by topic
   const topics = useMemo(() => {
@@ -30,11 +25,12 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
 
   const [currentTopicIndex, setCurrentTopicIndex] = useState(0);
   const [currentQuestionInTopic, setCurrentQuestionInTopic] = useState(0);
-  const [allAnswers, setAllAnswers] = useState<UserAnswer[]>([]);
   
-  // Interactive State
-  const [selectedOption, setSelectedOption] = useState<number | null>(null);
-  const [isAnswered, setIsAnswered] = useState(false); // New: to show feedback immediately
+  // Stores finalized answers for previous topics + current topic draft answers
+  // We use a Map or Object to store answers by Question ID to allow navigating back and forth
+  const [answersMap, setAnswersMap] = useState<Record<number, number>>({});
+  
+  // Topic Result State
   const [showTopicResult, setShowTopicResult] = useState(false);
   const [topicScore, setTopicScore] = useState(0);
 
@@ -43,17 +39,22 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
 
   const currentTopic = topics[currentTopicIndex];
   const currentQuestion = currentTopic.questions[currentQuestionInTopic];
+  
+  // Get currently selected option for the active question from our map
+  const currentSelectedOption = answersMap[currentQuestion.id] ?? null;
 
   // Timer Effect
   useEffect(() => {
-    if (settings.timerMode === 'unlimited' || showTopicResult || isAnswered) return;
+    if (settings.timerMode === 'unlimited' || showTopicResult) return;
 
     setTimeLeft(settings.secondsPerQuestion);
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          handleTimeOut();
+          // When time runs out, if no answer selected, we effectively select nothing (or keep current) and move next?
+          // For this specific UX, we'll just auto-move to next question if time runs out.
+          handleNext();
           return 0;
         }
         return prev - 1;
@@ -61,83 +62,79 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [currentQuestion, settings, showTopicResult, isAnswered]);
-
-  const handleTimeOut = () => {
-    // Timeout implies incorrect/unanswered. 
-    // We treat it as wrong.
-    setSelectedOption(-1); // -1 indicates time ran out / no selection
-    setIsAnswered(true);
-  };
+  }, [currentQuestion, settings, showTopicResult]);
 
   const handleOptionSelect = (idx: number) => {
-    if (isAnswered) return;
-    setSelectedOption(idx);
+    setAnswersMap(prev => ({
+      ...prev,
+      [currentQuestion.id]: idx
+    }));
   };
 
-  const checkAnswer = () => {
-    if (selectedOption === null) return;
-    setIsAnswered(true);
-  };
-
-  const handleNext = () => {
-    // Save current answer
-    const isCorrect = selectedOption === currentQuestion.correctAnswerIndex;
-    const newAnswer: UserAnswer = {
-      questionId: currentQuestion.id,
-      selectedOptionIndex: selectedOption ?? -1,
-      isCorrect
-    };
-
-    const filteredAnswers = allAnswers.filter(a => a.questionId !== currentQuestion.id);
-    const updatedAnswers = [...filteredAnswers, newAnswer];
-    setAllAnswers(updatedAnswers);
-
-    // Reset state for next question
-    setIsAnswered(false);
-    setSelectedOption(null);
-
-    // Check if Topic is Finished
-    if (currentQuestionInTopic < currentTopic.questions.length - 1) {
-      setCurrentQuestionInTopic(prev => prev + 1);
-    } else {
-      calculateTopicResult(updatedAnswers);
+  const handlePrevious = () => {
+    if (currentQuestionInTopic > 0) {
+      setCurrentQuestionInTopic(prev => prev - 1);
     }
   };
 
-  const calculateTopicResult = (answersSnapshot: UserAnswer[]) => {
-    const topicQIds = currentTopic.questions.map(q => q.id);
-    const topicAnswers = answersSnapshot.filter(a => topicQIds.includes(a.questionId));
-    
-    const correctCount = topicAnswers.filter(a => a.isCorrect).length;
-    const score = (correctCount / currentTopic.questions.length) * 100;
-    
+  const handleNext = () => {
+    if (currentQuestionInTopic < currentTopic.questions.length - 1) {
+      setCurrentQuestionInTopic(prev => prev + 1);
+    } else {
+      // If it's the last question, we submit the topic
+      handleSubmitTopic();
+    }
+  };
+
+  const handleSubmitTopic = () => {
+    // Calculate score for this topic based on current answersMap
+    const topicQuestions = currentTopic.questions;
+    let correctCount = 0;
+
+    topicQuestions.forEach(q => {
+      const selected = answersMap[q.id];
+      if (selected === q.correctAnswerIndex) {
+        correctCount++;
+      }
+    });
+
+    const score = (correctCount / topicQuestions.length) * 100;
     setTopicScore(score);
     setShowTopicResult(true);
   };
 
   const handleRetryTopic = () => {
+    // Clear answers for this topic
+    setAnswersMap(prev => {
+      const newMap = { ...prev };
+      currentTopic.questions.forEach(q => {
+        delete newMap[q.id];
+      });
+      return newMap;
+    });
+
     setCurrentQuestionInTopic(0);
     setShowTopicResult(false);
-    setIsAnswered(false);
-    setSelectedOption(null);
   };
 
   const handleNextTopic = () => {
     setShowTopicResult(false);
-    setIsAnswered(false);
-    setSelectedOption(null);
     
     if (currentTopicIndex < topics.length - 1) {
       setCurrentTopicIndex(prev => prev + 1);
       setCurrentQuestionInTopic(0);
     } else {
-      onComplete(allAnswers);
+      // Format all answers for the final analysis
+      const finalAnswers: UserAnswer[] = questions.map(q => ({
+        questionId: q.id,
+        selectedOptionIndex: answersMap[q.id] ?? -1,
+        isCorrect: answersMap[q.id] === q.correctAnswerIndex
+      }));
+      onComplete(finalAnswers);
     }
   };
 
   // Logic for feedback UI
-  const isCorrect = selectedOption === currentQuestion.correctAnswerIndex;
   const isPassed = topicScore >= 70;
   
   // Calculate total progress
@@ -166,12 +163,12 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
           </div>
 
           <h2 className="text-3xl font-extrabold text-slate-900 mb-2">
-            {isPassed ? 'Topic Mastered!' : 'Needs Improvement'}
+            {isPassed ? 'Topic Completed!' : 'Topic Failed'}
           </h2>
           <p className="text-slate-500 mb-8 text-lg">
             You scored <span className={`font-bold ${isPassed ? 'text-green-600' : 'text-red-600'}`}>{Math.round(topicScore)}%</span> on 
             <span className="font-semibold text-slate-800"> {currentTopic.name}</span>.
-            {isPassed ? ' You are ready for the next section.' : ' You need 70% to proceed.'}
+            {isPassed ? ' You can proceed.' : ' You need 70% to pass.'}
           </p>
 
           <div className="flex justify-center gap-4">
@@ -188,7 +185,7 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
                 onClick={handleNextTopic}
                 className="px-8 py-3 bg-green-600 text-white rounded-lg font-bold shadow-lg shadow-green-100 hover:bg-green-700 hover:scale-105 transition-all"
               >
-                {currentTopicIndex < topics.length - 1 ? 'Next Topic' : 'See Full Analysis'}
+                {currentTopicIndex < topics.length - 1 ? 'Next Topic' : 'View Final Analysis'}
               </button>
             )}
           </div>
@@ -249,119 +246,61 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
 
           <div className="space-y-3">
             {currentQuestion.options.map((option, idx) => {
-              // Determine style state
-              let borderColor = 'border-slate-200 hover:border-slate-300';
-              let bgColor = 'bg-white hover:bg-slate-50';
-              let textColor = 'text-slate-600';
-              let icon = null;
-
-              if (isAnswered) {
-                // Logic after answering
-                if (idx === currentQuestion.correctAnswerIndex) {
-                   borderColor = 'border-green-500';
-                   bgColor = 'bg-green-50';
-                   textColor = 'text-green-700 font-medium';
-                   icon = (
-                     <svg className="w-5 h-5 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                     </svg>
-                   );
-                } else if (idx === selectedOption) {
-                   borderColor = 'border-red-500';
-                   bgColor = 'bg-red-50';
-                   textColor = 'text-red-700 font-medium';
-                   icon = (
-                    <svg className="w-5 h-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                   );
-                } else {
-                   borderColor = 'border-slate-100 opacity-50';
-                }
-              } else {
-                // Logic before answering
-                if (selectedOption === idx) {
-                  borderColor = 'border-green-500'; // Selection color before submitting
-                  bgColor = 'bg-green-50';
-                  textColor = 'text-green-700 font-medium';
-                }
-              }
-
+              const isSelected = currentSelectedOption === idx;
+              
               return (
                 <div 
                   key={idx}
                   onClick={() => handleOptionSelect(idx)}
-                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 flex items-center justify-between group
-                    ${borderColor} ${bgColor}`}
+                  className={`relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200 flex items-center gap-4 group
+                    ${isSelected 
+                       ? 'border-green-500 bg-green-50' 
+                       : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'}`}
                 >
-                  <div className="flex items-center gap-4">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold border transition-colors
-                      ${isAnswered 
-                        ? (idx === currentQuestion.correctAnswerIndex ? 'bg-green-100 text-green-700 border-green-200' : 
-                           idx === selectedOption ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-500 border-slate-200')
-                        : (selectedOption === idx ? 'bg-green-600 text-white border-green-600' : 'bg-slate-50 text-slate-500 border-slate-200 group-hover:border-slate-300')
-                      }`}>
-                      {String.fromCharCode(65 + idx)}
-                    </div>
-                    <span className={`text-base ${textColor}`}>
-                      {option}
-                    </span>
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold border transition-colors
+                    ${isSelected 
+                      ? 'bg-green-600 text-white border-green-600' 
+                      : 'bg-slate-50 text-slate-500 border-slate-200 group-hover:border-slate-300'}`}>
+                    {String.fromCharCode(65 + idx)}
                   </div>
-                  {icon && <div>{icon}</div>}
+                  <span className={`text-base ${isSelected ? 'text-green-800 font-medium' : 'text-slate-600'}`}>
+                    {option}
+                  </span>
                 </div>
               );
             })}
           </div>
         </div>
-
-        {/* Feedback Section - Shows only after answering */}
-        {isAnswered && (
-          <div className={`p-6 border-t animate-fade-in ${isCorrect ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100'}`}>
-            <div className="flex items-start gap-3">
-              <div className={`mt-1 p-1 rounded-full ${isCorrect ? 'bg-green-200' : 'bg-red-200'}`}>
-                 {isCorrect ? (
-                    <svg className="w-4 h-4 text-green-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
-                 ) : (
-                    <svg className="w-4 h-4 text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
-                 )}
-              </div>
-              <div>
-                <h4 className={`font-bold mb-1 ${isCorrect ? 'text-green-800' : 'text-red-800'}`}>
-                  {isCorrect ? 'Correct!' : 'Incorrect'}
-                </h4>
-                <p className={`text-sm leading-relaxed ${isCorrect ? 'text-green-700' : 'text-red-700'}`}>
-                  {currentQuestion.explanation || "Well done."}
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Footer Navigation */}
-      <div className="mt-6 flex justify-end">
-        {!isAnswered ? (
-           <button
-             onClick={checkAnswer}
-             disabled={selectedOption === null}
-             className={`px-8 py-3 rounded-lg font-bold text-white shadow-lg transition-all
-               ${selectedOption !== null 
-                 ? 'bg-green-600 hover:bg-green-700 hover:scale-105 shadow-green-200' 
-                 : 'bg-slate-300 cursor-not-allowed'}`}
-           >
-             Check Answer
-           </button>
-        ) : (
-           <button
-             onClick={handleNext}
-             className="px-8 py-3 bg-slate-900 text-white rounded-lg font-bold shadow-lg hover:bg-slate-800 hover:scale-105 transition-all flex items-center gap-2"
-           >
-             {currentQuestionInTopic === currentTopic.questions.length - 1 ? 'Finish Topic' : 'Next Question'}
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-               <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
-             </svg>
-           </button>
-        )}
+      <div className="mt-6 flex justify-between items-center">
+         <button
+            onClick={handlePrevious}
+            disabled={currentQuestionInTopic === 0}
+            className={`px-6 py-3 rounded-lg font-bold transition-all flex items-center gap-2
+              ${currentQuestionInTopic === 0 
+                ? 'text-slate-300 cursor-not-allowed' 
+                : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
+         >
+           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
+            </svg>
+            Previous
+         </button>
+
+         <button
+           onClick={handleNext}
+           className={`px-8 py-3 rounded-lg font-bold text-white shadow-lg transition-all flex items-center gap-2
+            ${currentQuestionInTopic === currentTopic.questions.length - 1 
+               ? 'bg-green-600 hover:bg-green-700 shadow-green-200' 
+               : 'bg-slate-900 hover:bg-slate-800 shadow-slate-200'}`}
+         >
+           {currentQuestionInTopic === currentTopic.questions.length - 1 ? 'Submit Topic' : 'Next Question'}
+           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+             <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+           </svg>
+         </button>
       </div>
     </div>
   );

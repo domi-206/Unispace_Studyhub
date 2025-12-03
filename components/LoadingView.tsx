@@ -9,29 +9,26 @@ export const LoadingView: React.FC<LoadingViewProps> = ({ message }) => {
   const [subMessageIndex, setSubMessageIndex] = useState(0);
 
   const subMessages = [
-    "Scanning document structure...",
-    "Identifying key topics...",
-    "Analyzing concept complexity...",
-    "Drafting challenging questions...",
-    "Verifying answers against context...",
-    "Finalizing your personalized session..."
+    "Scanning content...",
+    "Drafting questions...",
+    "Verifying answers...",
+    "Finalizing..."
   ];
 
   useEffect(() => {
-    // Cycle sub-messages every 2 seconds
+    // Cycle sub-messages faster (every 800ms)
     const msgInterval = setInterval(() => {
       setSubMessageIndex((prev) => (prev + 1) % subMessages.length);
-    }, 2000);
+    }, 800);
 
-    // Simulate progress bar
-    // It goes up to 90% and waits there until the actual process finishes
+    // Speed up progress bar to reach 90% in approx 2.5 - 3 seconds
     const progressInterval = setInterval(() => {
       setProgress((prev) => {
-        if (prev >= 90) return prev;
-        // Random increment between 1 and 3 for organic feel
-        return prev + Math.random() * 2;
+        if (prev >= 95) return prev;
+        // Faster increments
+        return prev + (Math.random() * 8 + 2);
       });
-    }, 150);
+    }, 200);
 
     return () => {
       clearInterval(msgInterval);
@@ -45,14 +42,14 @@ export const LoadingView: React.FC<LoadingViewProps> = ({ message }) => {
       {/* Animated Brain/Process Icon */}
       <div className="relative w-32 h-32 mb-10">
         {/* Pulsing Background */}
-        <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-20"></div>
+        <div className="absolute inset-0 bg-green-100 rounded-full animate-ping opacity-20 duration-700"></div>
         
-        {/* Rotating Outer Ring */}
+        {/* Rotating Outer Ring - Faster spin */}
         <div className="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
-        <div className="absolute inset-0 border-4 border-t-green-500 rounded-full animate-[spin_2s_linear_infinite]"></div>
+        <div className="absolute inset-0 border-4 border-t-green-500 rounded-full animate-[spin_1s_linear_infinite]"></div>
         
-        {/* Rotating Inner Ring */}
-        <div className="absolute inset-4 border-4 border-t-green-300 rounded-full animate-[spin_3s_linear_infinite_reverse]"></div>
+        {/* Rotating Inner Ring - Faster spin */}
+        <div className="absolute inset-4 border-4 border-t-green-300 rounded-full animate-[spin_1.5s_linear_infinite_reverse]"></div>
 
         {/* Center Icon */}
         <div className="absolute inset-0 flex items-center justify-center animate-pulse">
@@ -74,14 +71,14 @@ export const LoadingView: React.FC<LoadingViewProps> = ({ message }) => {
       {/* Progress Bar */}
       <div className="w-full max-w-sm h-2 bg-slate-200 rounded-full overflow-hidden shadow-inner">
         <div 
-            className="h-full bg-green-500 rounded-full transition-all duration-300 ease-out relative overflow-hidden"
+            className="h-full bg-green-500 rounded-full transition-all duration-200 ease-linear relative overflow-hidden"
             style={{ width: `${progress}%` }}
         >
-            <div className="absolute inset-0 bg-white/30 animate-[pulse_2s_infinite]"></div>
+            <div className="absolute inset-0 bg-white/30 animate-[pulse_1s_infinite]"></div>
         </div>
       </div>
       
-      <p className="mt-6 text-xs text-slate-400 font-medium tracking-wide uppercase">Preparing your study environment</p>
+      <p className="mt-6 text-xs text-slate-400 font-medium tracking-wide uppercase">Optimizing performance...</p>
     </div>
   );
 };
