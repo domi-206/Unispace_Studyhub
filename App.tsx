@@ -8,7 +8,11 @@ import { AnalysisView } from './components/AnalysisView';
 import { QuizSetup } from './components/QuizSetup';
 import { LoadingView } from './components/LoadingView';
 
-const App: React.FC = () => {
+interface CourseMasterProps {
+  onClose?: () => void;
+}
+
+const CourseMaster: React.FC<CourseMasterProps> = ({ onClose }) => {
   const [mode, setMode] = useState<AppMode>(AppMode.UPLOAD);
   const [fileBase64, setFileBase64] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
@@ -93,14 +97,28 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
       {/* Header */}
       <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20">
-        <div className="flex items-center gap-2 cursor-pointer" onClick={resetApp}>
-          <div className="bg-green-600 text-white p-1.5 rounded-lg">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-            </svg>
+        <div className="flex items-center gap-4">
+          {onClose && (
+            <button 
+              onClick={onClose}
+              className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors border-r border-slate-200 pr-4 mr-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+              </svg>
+              <span className="font-bold text-sm">Exit</span>
+            </button>
+          )}
+          <div className="flex items-center gap-2 cursor-pointer" onClick={resetApp}>
+            <div className="bg-green-600 text-white p-1.5 rounded-lg">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+              </svg>
+            </div>
+            <span className="font-bold text-xl text-slate-800 tracking-tight">Study Hub</span>
           </div>
-          <span className="font-bold text-xl text-slate-800 tracking-tight">Study Hub</span>
         </div>
+        
         {fileName && (
           <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full border border-slate-200">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -220,4 +238,4 @@ const App: React.FC = () => {
   );
 };
 
-export default App;
+export default CourseMaster;
