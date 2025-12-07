@@ -17,6 +17,7 @@ const App: React.FC = () => {
   
   // Quiz State
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
   const [quizAnalysis, setQuizAnalysis] = useState<QuizAnalysis | null>(null);
   const [quizSettings, setQuizSettings] = useState<QuizSettings | null>(null);
 
@@ -53,6 +54,7 @@ const App: React.FC = () => {
   };
 
   const handleQuizComplete = async (answers: UserAnswer[]) => {
+    setUserAnswers(answers);
     setLoading(true);
     setLoadingMessage('Analyzing your performance...');
     try {
@@ -76,8 +78,15 @@ const App: React.FC = () => {
     setFileBase64('');
     setFileName('');
     setQuizQuestions([]);
+    setUserAnswers([]);
     setQuizAnalysis(null);
     setQuizSettings(null);
+  };
+
+  const handleRetakeQuiz = () => {
+    setMode(AppMode.QUIZ_SETUP);
+    setQuizAnalysis(null);
+    setUserAnswers([]);
   };
 
   return (
@@ -200,7 +209,10 @@ const App: React.FC = () => {
         {mode === AppMode.ANALYSIS && quizAnalysis && (
           <AnalysisView 
             analysis={quizAnalysis} 
-            onBack={() => setMode(AppMode.MENU)} 
+            questions={quizQuestions}
+            userAnswers={userAnswers}
+            onBack={() => setMode(AppMode.MENU)}
+            onRetake={handleRetakeQuiz}
           />
         )}
       </main>

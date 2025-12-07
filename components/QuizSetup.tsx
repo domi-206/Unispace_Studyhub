@@ -8,14 +8,22 @@ interface QuizSetupProps {
 
 export const QuizSetup: React.FC<QuizSetupProps> = ({ onStart, onCancel }) => {
   const [questionCount, setQuestionCount] = useState<number>(10);
-  const [timerMode, setTimerMode] = useState<'unlimited' | 'timed'>('unlimited');
-  const [secondsPerQuestion, setSecondsPerQuestion] = useState<number>(60);
+  const [timerMode, setTimerMode] = useState<'unlimited' | 'question_timer' | 'quiz_timer'>('unlimited');
+  const [timeLimit, setTimeLimit] = useState<number>(60); // Default 60s for question timer
+  const [totalMinutes, setTotalMinutes] = useState<number>(30); // Default 30m for total timer
 
   const handleStart = () => {
+    let finalTimeLimit = 0;
+    if (timerMode === 'question_timer') {
+      finalTimeLimit = timeLimit;
+    } else if (timerMode === 'quiz_timer') {
+      finalTimeLimit = totalMinutes;
+    }
+
     onStart({
       questionCount,
       timerMode,
-      secondsPerQuestion
+      timeLimit: finalTimeLimit
     });
   };
 
@@ -60,7 +68,9 @@ export const QuizSetup: React.FC<QuizSetupProps> = ({ onStart, onCancel }) => {
         {/* Timer Settings */}
         <div>
           <label className="text-sm font-semibold text-slate-700 mb-4 block">Timer Settings</label>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* Unlimited */}
             <div 
               onClick={() => setTimerMode('unlimited')}
               className={`p-4 border-2 rounded-xl cursor-pointer transition-all flex flex-col items-center justify-center gap-2
@@ -69,40 +79,82 @@ export const QuizSetup: React.FC<QuizSetupProps> = ({ onStart, onCancel }) => {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span className="font-bold">Unlimited Time</span>
+              <span className="font-bold text-sm">Unlimited</span>
             </div>
             
+            {/* Per Question */}
             <div 
-              onClick={() => setTimerMode('timed')}
+              onClick={() => setTimerMode('question_timer')}
               className={`p-4 border-2 rounded-xl cursor-pointer transition-all flex flex-col items-center justify-center gap-2
-                ${timerMode === 'timed' ? 'border-green-600 bg-green-50 text-green-700' : 'border-slate-200 hover:border-green-300'}`}
+                ${timerMode === 'question_timer' ? 'border-green-600 bg-green-50 text-green-700' : 'border-slate-200 hover:border-green-300'}`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
               </svg>
-              <span className="font-bold">Timer Per Question</span>
+              <span className="font-bold text-sm">Per Question</span>
+            </div>
+
+            {/* Total Time */}
+            <div 
+              onClick={() => setTimerMode('quiz_timer')}
+              className={`p-4 border-2 rounded-xl cursor-pointer transition-all flex flex-col items-center justify-center gap-2
+                ${timerMode === 'quiz_timer' ? 'border-green-600 bg-green-50 text-green-700' : 'border-slate-200 hover:border-green-300'}`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="font-bold text-sm">Total Time</span>
             </div>
           </div>
 
-          {timerMode === 'timed' && (
-             <div className="mt-4 animate-fade-in">
-               <label className="text-xs font-semibold text-slate-500 mb-2 block uppercase tracking-wider">Seconds per Question</label>
-               <div className="flex gap-2">
-                 {[30, 45, 60, 90, 120].map((sec) => (
-                   <button
-                    key={sec}
-                    onClick={() => setSecondsPerQuestion(sec)}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors
-                      ${secondsPerQuestion === sec 
-                        ? 'bg-green-600 text-white border-green-600' 
-                        : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'}`}
-                   >
-                     {sec}s
-                   </button>
-                 ))}
+          {/* Contextual Timer Options */}
+          <div className="mt-6 bg-slate-50 p-4 rounded-xl border border-slate-100 min-h-[100px] flex items-center justify-center">
+             {timerMode === 'unlimited' && (
+               <p className="text-slate-500 text-sm">No time limits. Take as long as you need to answer.</p>
+             )}
+
+             {timerMode === 'question_timer' && (
+               <div className="w-full">
+                 <label className="text-xs font-semibold text-slate-500 mb-2 block uppercase tracking-wider text-center">Seconds per Question</label>
+                 <div className="flex gap-2 justify-center">
+                   {[30, 45, 60, 90, 120].map((sec) => (
+                     <button
+                      key={sec}
+                      onClick={() => setTimeLimit(sec)}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg border transition-colors
+                        ${timeLimit === sec 
+                          ? 'bg-green-600 text-white border-green-600' 
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-green-300'}`}
+                     >
+                       {sec}s
+                     </button>
+                   ))}
+                 </div>
                </div>
-             </div>
-          )}
+             )}
+
+             {timerMode === 'quiz_timer' && (
+               <div className="w-full">
+                 <label className="flex justify-between text-xs font-semibold text-slate-500 mb-2 uppercase tracking-wider">
+                    <span>Total Duration</span>
+                    <span className="text-green-700 font-bold">{totalMinutes} Minutes</span>
+                 </label>
+                 <input
+                    type="range"
+                    min="10"
+                    max="90"
+                    step="5"
+                    value={totalMinutes}
+                    onChange={(e) => setTotalMinutes(parseInt(e.target.value))}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                  />
+                  <div className="flex justify-between text-xs text-slate-400 mt-2">
+                    <span>10m</span>
+                    <span>90m</span>
+                  </div>
+               </div>
+             )}
+          </div>
         </div>
 
         <button

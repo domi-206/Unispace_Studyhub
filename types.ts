@@ -14,8 +14,8 @@ export enum QuestionType {
 
 export interface QuizSettings {
   questionCount: number;
-  timerMode: 'unlimited' | 'timed';
-  secondsPerQuestion: number;
+  timerMode: 'unlimited' | 'question_timer' | 'quiz_timer';
+  timeLimit: number; // Seconds for 'question_timer', Minutes for 'quiz_timer'
 }
 
 export interface QuizQuestion {
@@ -54,4 +54,10 @@ export interface ChatMessage {
   role: 'user' | 'model';
   text: string;
   isThinking?: boolean;
+  isEdited?: boolean;
+  replyTo?: {
+    id: string;
+    text: string;
+    role: string;
+  };
 }

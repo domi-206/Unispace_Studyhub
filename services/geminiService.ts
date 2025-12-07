@@ -1,8 +1,7 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import { QuizQuestion, QuestionType, QuizAnalysis, UserAnswer } from "../types";
 
-const apiKey = process.env.API_KEY || '';
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 // Helper to convert File to base64
 export const fileToGenerativePart = async (file: File): Promise<string> => {
@@ -47,9 +46,10 @@ export const generateQuiz = async (base64Pdf: string, questionCount: number = 10
     Generate a quiz with exactly ${questionCount} questions based on the PDF.
     
     RULES:
-    1. Group questions by TOPIC (e.g., Intro, Chapter 1).
-    2. Mix Multiple Choice and True/False.
-    3. Explanation MUST be extremely concise (max 15 words) to ensure speed.
+    1. Questions should cover the ENTIRE document evenly (Start to End).
+    2. Do NOT group questions strictly by chapter; allow a diverse flow.
+    3. Mix Multiple Choice and True/False.
+    4. Explanation MUST be extremely concise (max 15 words) to ensure speed.
   `;
 
   try {
@@ -172,7 +172,8 @@ export const chatWithPdf = async (base64Pdf: string, history: {role: string, par
         ...history
       ],
       config: {
-        systemInstruction: "You are a concise tutor. Answer directly based on the PDF. Keep answers short unless asked otherwise.",
+        // Enforcing formatting structure in system instructions
+        systemInstruction: "You are a helpful tutor. Answer strictly based on the PDF. Format your answers clearly: Use **bold text** for key concepts, define terms in separate paragraphs, and use bullet points for lists to ensure high readability.",
         thinkingConfig: { thinkingBudget: 0 }
       }
     });

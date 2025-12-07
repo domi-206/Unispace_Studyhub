@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { QuizQuestion, UserAnswer, QuizSettings } from '../types';
 
 interface QuizViewProps {
@@ -10,51 +10,37 @@ interface QuizViewProps {
 }
 
 export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileName, onComplete, onExit }) => {
-  // Group questions by topic
-  const topics = useMemo(() => {
-    const groups: { [key: string]: QuizQuestion[] } = {};
-    questions.forEach(q => {
-      if (!groups[q.topic]) groups[q.topic] = [];
-      groups[q.topic].push(q);
-    });
-    return Object.keys(groups).map(topic => ({
-      name: topic,
-      questions: groups[topic]
-    }));
-  }, [questions]);
-
-  const [currentTopicIndex, setCurrentTopicIndex] = useState(0);
-  const [currentQuestionInTopic, setCurrentQuestionInTopic] = useState(0);
+  // FLATTENED STATE: No more topic grouping for navigation
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   
-  // Stores finalized answers for previous topics + current topic draft answers
-  // We use a Map or Object to store answers by Question ID to allow navigating back and forth
+  // Store all answers in a single map
   const [answersMap, setAnswersMap] = useState<Record<number, number>>({});
   
-  // Topic Result State
-  const [showTopicResult, setShowTopicResult] = useState(false);
-  const [topicScore, setTopicScore] = useState(0);
-
   // Timer State
-  const [timeLeft, setTimeLeft] = useState(settings.secondsPerQuestion);
-
-  const currentTopic = topics[currentTopicIndex];
-  const currentQuestion = currentTopic.questions[currentQuestionInTopic];
+  // Global timer (quiz_timer): Initialized once.
+  // Question timer (question_timer): Resets on index change.
+  const [timeLeft, setTimeLeft] = useState(
+    settings.timerMode === 'quiz_timer' 
+      ? settings.timeLimit * 60 
+      : settings.timerMode === 'question_timer' ? settings.timeLimit : 0
+  );
   
-  // Get currently selected option for the active question from our map
+  // Ref to access current answers in timer callback without dependency loop
+  const answersRef = useRef(answersMap);
+  useEffect(() => { answersRef.current = answersMap; }, [answersMap]);
+
+  const currentQuestion = questions[currentQuestionIndex];
   const currentSelectedOption = answersMap[currentQuestion.id] ?? null;
 
   // Timer Effect
   useEffect(() => {
-    if (settings.timerMode === 'unlimited' || showTopicResult) return;
+    if (settings.timerMode === 'unlimited') return;
 
-    setTimeLeft(settings.secondsPerQuestion);
     const timer = setInterval(() => {
       setTimeLeft((prev) => {
         if (prev <= 1) {
           clearInterval(timer);
-          // When time runs out, if no answer selected, we effectively select nothing (or keep current) and move next?
-          // For this specific UX, we'll just auto-move to next question if time runs out.
-          handleNext();
+          handleTimeOver();
           return 0;
         }
         return prev - 1;
@@ -62,7 +48,39 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
     }, 1000);
 
     return () => clearInterval(timer);
-  }, [currentQuestion, settings, showTopicResult]);
+  }, [settings.timerMode, currentQuestionIndex]); // Re-bind to ensure closure freshness if needed
+
+  // Reset Per-Question Timer when question changes
+  useEffect(() => {
+    if (settings.timerMode === 'question_timer') {
+      setTimeLeft(settings.timeLimit);
+    }
+  }, [currentQuestionIndex, settings.timerMode, settings.timeLimit]);
+
+  const handleTimeOver = () => {
+    if (settings.timerMode === 'quiz_timer') {
+      // Global time over: Force submit everything
+      finishQuiz();
+    } else {
+      // Per question time over: Move to next question automatically
+      handleNext();
+    }
+  };
+
+  const finishQuiz = () => {
+    const finalAnswers: UserAnswer[] = questions.map(q => ({
+      questionId: q.id,
+      selectedOptionIndex: answersRef.current[q.id] ?? -1, // Use ref to get latest
+      isCorrect: answersRef.current[q.id] === q.correctAnswerIndex
+    }));
+    onComplete(finalAnswers);
+  };
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   const handleOptionSelect = (idx: number) => {
     setAnswersMap(prev => ({
@@ -72,127 +90,22 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
   };
 
   const handlePrevious = () => {
-    if (currentQuestionInTopic > 0) {
-      setCurrentQuestionInTopic(prev => prev - 1);
+    if (currentQuestionIndex > 0) {
+      setCurrentQuestionIndex(prev => prev - 1);
     }
   };
 
   const handleNext = () => {
-    if (currentQuestionInTopic < currentTopic.questions.length - 1) {
-      setCurrentQuestionInTopic(prev => prev + 1);
+    if (currentQuestionIndex < questions.length - 1) {
+      setCurrentQuestionIndex(prev => prev + 1);
     } else {
-      // If it's the last question, we submit the topic
-      handleSubmitTopic();
+      // Last question reached
+      finishQuiz();
     }
   };
 
-  const handleSubmitTopic = () => {
-    // Calculate score for this topic based on current answersMap
-    const topicQuestions = currentTopic.questions;
-    let correctCount = 0;
-
-    topicQuestions.forEach(q => {
-      const selected = answersMap[q.id];
-      if (selected === q.correctAnswerIndex) {
-        correctCount++;
-      }
-    });
-
-    const score = (correctCount / topicQuestions.length) * 100;
-    setTopicScore(score);
-    setShowTopicResult(true);
-  };
-
-  const handleRetryTopic = () => {
-    // Clear answers for this topic
-    setAnswersMap(prev => {
-      const newMap = { ...prev };
-      currentTopic.questions.forEach(q => {
-        delete newMap[q.id];
-      });
-      return newMap;
-    });
-
-    setCurrentQuestionInTopic(0);
-    setShowTopicResult(false);
-  };
-
-  const handleNextTopic = () => {
-    setShowTopicResult(false);
-    
-    if (currentTopicIndex < topics.length - 1) {
-      setCurrentTopicIndex(prev => prev + 1);
-      setCurrentQuestionInTopic(0);
-    } else {
-      // Format all answers for the final analysis
-      const finalAnswers: UserAnswer[] = questions.map(q => ({
-        questionId: q.id,
-        selectedOptionIndex: answersMap[q.id] ?? -1,
-        isCorrect: answersMap[q.id] === q.correctAnswerIndex
-      }));
-      onComplete(finalAnswers);
-    }
-  };
-
-  // Logic for feedback UI
-  const isPassed = topicScore >= 70;
-  
-  // Calculate total progress
-  const totalQuestions = topics.reduce((acc, t) => acc + t.questions.length, 0);
-  const questionsPassed = topics.slice(0, currentTopicIndex).reduce((acc, t) => acc + t.questions.length, 0) + currentQuestionInTopic;
-  const overallProgress = (questionsPassed / totalQuestions) * 100;
-
-  // Topic Result Overlay
-  if (showTopicResult) {
-    return (
-      <div className="max-w-2xl mx-auto w-full mt-10 p-6">
-        <div className={`bg-white rounded-2xl shadow-xl border-t-8 p-10 text-center animate-fade-in
-          ${isPassed ? 'border-green-500' : 'border-red-500'}`}>
-          
-          <div className={`mx-auto w-24 h-24 rounded-full flex items-center justify-center mb-6 border-4
-            ${isPassed ? 'bg-green-50 text-green-500 border-green-100' : 'bg-red-50 text-red-500 border-red-100'}`}>
-            {isPassed ? (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : (
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            )}
-          </div>
-
-          <h2 className="text-3xl font-extrabold text-slate-900 mb-2">
-            {isPassed ? 'Topic Completed!' : 'Topic Failed'}
-          </h2>
-          <p className="text-slate-500 mb-8 text-lg">
-            You scored <span className={`font-bold ${isPassed ? 'text-green-600' : 'text-red-600'}`}>{Math.round(topicScore)}%</span> on 
-            <span className="font-semibold text-slate-800"> {currentTopic.name}</span>.
-            {isPassed ? ' You can proceed.' : ' You need 70% to pass.'}
-          </p>
-
-          <div className="flex justify-center gap-4">
-            {!isPassed && (
-              <button 
-                onClick={handleRetryTopic}
-                className="px-8 py-3 bg-red-600 text-white rounded-lg font-bold shadow-lg shadow-red-100 hover:bg-red-700 hover:scale-105 transition-all"
-              >
-                Retry Topic
-              </button>
-            )}
-            {isPassed && (
-              <button 
-                onClick={handleNextTopic}
-                className="px-8 py-3 bg-green-600 text-white rounded-lg font-bold shadow-lg shadow-green-100 hover:bg-green-700 hover:scale-105 transition-all"
-              >
-                {currentTopicIndex < topics.length - 1 ? 'Next Topic' : 'View Final Analysis'}
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // Progress calculation
+  const overallProgress = ((currentQuestionIndex + 1) / questions.length) * 100;
 
   return (
     <div className="max-w-4xl mx-auto w-full px-4 md:px-0">
@@ -208,12 +121,29 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4 mb-6">
             <div>
-              <h1 className="text-2xl font-bold text-slate-900">{currentTopic.name} Quiz</h1>
+              <h1 className="text-2xl font-bold text-slate-900">Quiz Session</h1>
               <p className="text-slate-500 text-sm mt-1">Based on "{fileName}"</p>
             </div>
-            <span className="inline-flex items-center justify-center px-4 py-1.5 rounded-full bg-slate-100 text-slate-600 text-sm font-medium border border-slate-200">
-              Question {currentQuestionInTopic + 1} of {currentTopic.questions.length}
-            </span>
+            
+            <div className="flex items-center gap-3">
+               <span className="inline-flex items-center justify-center px-4 py-1.5 rounded-full bg-slate-100 text-slate-600 text-sm font-medium border border-slate-200">
+                 Question {currentQuestionIndex + 1} of {questions.length}
+               </span>
+               
+               {/* Timer Display */}
+               {settings.timerMode !== 'unlimited' && (
+                  <span className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-mono font-bold border
+                    ${timeLeft < 10 && settings.timerMode === 'question_timer' ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' : 
+                      timeLeft < 60 && settings.timerMode === 'quiz_timer' ? 'bg-red-50 text-red-600 border-red-200 animate-pulse' :
+                      'bg-slate-800 text-white border-slate-800'}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    {formatTime(timeLeft)}
+                    {settings.timerMode === 'quiz_timer' && <span className="text-xs font-normal opacity-70 ml-1">left</span>}
+                  </span>
+               )}
+            </div>
           </div>
 
           {/* Progress Bar */}
@@ -223,23 +153,18 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
               style={{ width: `${overallProgress}%` }}
             ></div>
           </div>
-          <div className="text-right">
-              {settings.timerMode === 'timed' && (
-                  <span className={`text-xs font-mono font-bold ${timeLeft < 10 ? 'text-red-500' : 'text-slate-400'}`}>
-                      Time: {timeLeft}s
-                  </span>
-              )}
-          </div>
         </div>
       </div>
 
       {/* Question Card */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative min-h-[400px]">
+        <div className="bg-slate-50/50 px-8 py-4 border-b border-slate-100 flex justify-between items-center">
+             <span className="text-xs font-bold tracking-wider text-slate-500 uppercase">Topic: {currentQuestion.topic}</span>
+             <span className="text-xs font-medium text-slate-400">
+                 {currentQuestion.type === 'MULTIPLE_CHOICE' ? 'Multiple Choice' : 'True / False'}
+             </span>
+        </div>
         <div className="p-8">
-          <p className="text-slate-400 text-sm font-medium mb-4">
-             {currentQuestion.type === 'MULTIPLE_CHOICE' ? 'Multiple Choice Question' : 'True or False'}
-          </p>
-          
           <h2 className="text-xl font-bold text-slate-900 mb-8 leading-relaxed">
             {currentQuestion.text}
           </h2>
@@ -274,12 +199,12 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
       </div>
 
       {/* Footer Navigation */}
-      <div className="mt-6 flex justify-between items-center">
+      <div className="mt-6 flex justify-between items-center mb-10">
          <button
             onClick={handlePrevious}
-            disabled={currentQuestionInTopic === 0}
+            disabled={currentQuestionIndex === 0}
             className={`px-6 py-3 rounded-lg font-bold transition-all flex items-center gap-2
-              ${currentQuestionInTopic === 0 
+              ${currentQuestionIndex === 0 
                 ? 'text-slate-300 cursor-not-allowed' 
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'}`}
          >
@@ -292,11 +217,11 @@ export const QuizView: React.FC<QuizViewProps> = ({ questions, settings, fileNam
          <button
            onClick={handleNext}
            className={`px-8 py-3 rounded-lg font-bold text-white shadow-lg transition-all flex items-center gap-2
-            ${currentQuestionInTopic === currentTopic.questions.length - 1 
+            ${currentQuestionIndex === questions.length - 1 
                ? 'bg-green-600 hover:bg-green-700 shadow-green-200' 
                : 'bg-slate-900 hover:bg-slate-800 shadow-slate-200'}`}
          >
-           {currentQuestionInTopic === currentTopic.questions.length - 1 ? 'Submit Topic' : 'Next Question'}
+           {currentQuestionIndex === questions.length - 1 ? 'Submit Quiz' : 'Next Question'}
            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
              <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
            </svg>
