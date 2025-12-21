@@ -1,41 +1,58 @@
+
 import React, { useState } from 'react';
-import { AppMode, QuizQuestion, QuizAnalysis, UserAnswer, QuizSettings } from './types';
-import { fileToGenerativePart, generateQuiz, analyzeQuizResults } from './services/geminiService';
+import { AppMode, QuizQuestion, QuizAnalysis, UserAnswer, QuizSettings, TheoryQuestion, TheoryDifficulty, TheoryExamAnalysis, TheoryAnswer, TheoryStrategy } from './types';
+import { fileToGenerativePart, generateQuiz, analyzeQuizResults, extractTopics, generateTheoryExam, gradeTheoryExam } from './services/geminiService';
 import { FileUpload } from './components/FileUpload';
 import { QuizView } from './components/QuizView';
 import { ChatView } from './components/ChatView';
 import { AnalysisView } from './components/AnalysisView';
 import { QuizSetup } from './components/QuizSetup';
 import { LoadingView } from './components/LoadingView';
+import { TheorySetup } from './components/TheorySetup';
+import { TheoryView } from './components/TheoryView';
+import { TheoryAnalysisView } from './components/TheoryAnalysisView';
 
-interface CourseMasterProps {
-  onClose?: () => void;
-}
+const UnispaceLogo = () => (
+  <div className="flex items-center gap-1 scale-90 md:scale-100">
+    <div className="bg-brand-green text-white w-10 h-10 rounded-xl flex items-center justify-center font-black text-2xl shadow-sm">
+      U
+    </div>
+    <span className="font-bold text-3xl text-brand-dark tracking-tighter ml-1">niSpace</span>
+  </div>
+);
 
-const CourseMaster: React.FC<CourseMasterProps> = ({ onClose }) => {
+const CourseMaster: React.FC = () => {
   const [mode, setMode] = useState<AppMode>(AppMode.UPLOAD);
   const [fileBase64, setFileBase64] = useState<string>('');
   const [fileName, setFileName] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
   const [loadingMessage, setLoadingMessage] = useState<string>('');
+  const [topics, setTopics] = useState<string[]>([]);
   
-  // Quiz State
+  // MCQ State
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [userAnswers, setUserAnswers] = useState<UserAnswer[]>([]);
   const [quizAnalysis, setQuizAnalysis] = useState<QuizAnalysis | null>(null);
   const [quizSettings, setQuizSettings] = useState<QuizSettings | null>(null);
 
+  // Theory State
+  const [theoryQuestions, setTheoryQuestions] = useState<TheoryQuestion[]>([]);
+  const [theoryAnalysis, setTheoryAnalysis] = useState<TheoryExamAnalysis | null>(null);
+  const [currentTheoryTopic, setCurrentTheoryTopic] = useState<string>('');
+  const [currentTheoryStrategy, setCurrentTheoryStrategy] = useState<TheoryStrategy>(TheoryStrategy.THREE_OF_FIVE);
+
   const handleFileSelect = async (file: File) => {
     setLoading(true);
-    setLoadingMessage('Processing PDF file...');
+    setLoadingMessage('Unispace is preparing your materials...');
     try {
       const base64 = await fileToGenerativePart(file);
+      const extractedTopics = await extractTopics(base64);
       setFileBase64(base64);
       setFileName(file.name);
+      setTopics(extractedTopics);
       setMode(AppMode.MENU);
     } catch (err) {
-      console.error(err);
-      alert("Failed to process file.");
+      alert("Failed to process document.");
     } finally {
       setLoading(false);
     }
@@ -44,14 +61,43 @@ const CourseMaster: React.FC<CourseMasterProps> = ({ onClose }) => {
   const handleQuizSetupComplete = async (settings: QuizSettings) => {
     setQuizSettings(settings);
     setLoading(true);
-    setLoadingMessage(`Generating ${settings.questionCount} questions...`);
+    setLoadingMessage(`Unispace is drafting your quiz...`);
     try {
       const questions = await generateQuiz(fileBase64, settings.questionCount);
       setQuizQuestions(questions);
       setMode(AppMode.QUIZ);
     } catch (err) {
-      console.error(err);
-      alert("Failed to generate quiz. Please try again.");
+      alert("AI Generation failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTheorySetupComplete = async (topic: string, diff: TheoryDifficulty, strategy: TheoryStrategy) => {
+    setCurrentTheoryTopic(topic);
+    setCurrentTheoryStrategy(strategy);
+    setLoading(true);
+    setLoadingMessage(`Unispace is drafting a custom ${diff} paper...`);
+    try {
+      const questions = await generateTheoryExam(fileBase64, topic, diff, strategy);
+      setTheoryQuestions(questions);
+      setMode(AppMode.THEORY_EXAM);
+    } catch (err) {
+      alert("Paper generation failed.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTheoryComplete = async (answers: TheoryAnswer[]) => {
+    setLoading(true);
+    setLoadingMessage('Unispace AI is evaluating your script...');
+    try {
+      const analysis = await gradeTheoryExam(fileBase64, theoryQuestions, answers);
+      setTheoryAnalysis(analysis);
+      setMode(AppMode.THEORY_ANALYSIS);
+    } catch (err) {
+      alert("Grading failed.");
     } finally {
       setLoading(false);
     }
@@ -60,179 +106,101 @@ const CourseMaster: React.FC<CourseMasterProps> = ({ onClose }) => {
   const handleQuizComplete = async (answers: UserAnswer[]) => {
     setUserAnswers(answers);
     setLoading(true);
-    setLoadingMessage('Analyzing your performance...');
+    setLoadingMessage('Unispace is analyzing performance...');
     try {
       const analysis = await analyzeQuizResults(fileBase64, quizQuestions, answers);
       setQuizAnalysis(analysis);
       setMode(AppMode.ANALYSIS);
     } catch (err) {
-      console.error(err);
-      alert("Failed to analyze results.");
+      alert("Analysis failed.");
     } finally {
       setLoading(false);
     }
-  };
-
-  const startChat = () => {
-    setMode(AppMode.CHAT);
   };
 
   const resetApp = () => {
     setMode(AppMode.UPLOAD);
     setFileBase64('');
     setFileName('');
-    setQuizQuestions([]);
-    setUserAnswers([]);
+    setTheoryAnalysis(null);
     setQuizAnalysis(null);
-    setQuizSettings(null);
-  };
-
-  const handleRetakeQuiz = () => {
-    setMode(AppMode.QUIZ_SETUP);
-    setQuizAnalysis(null);
-    setUserAnswers([]);
   };
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {/* Header */}
-      <header className="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-20">
-        <div className="flex items-center gap-4">
-          {onClose && (
-            <button 
-              onClick={onClose}
-              className="flex items-center gap-2 text-slate-500 hover:text-slate-800 transition-colors border-r border-slate-200 pr-4 mr-2"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
-              </svg>
-              <span className="font-bold text-sm">Exit</span>
-            </button>
-          )}
-          <div className="flex items-center gap-2 cursor-pointer" onClick={resetApp}>
-            <div className="bg-green-600 text-white p-1.5 rounded-lg">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-              </svg>
-            </div>
-            <span className="font-bold text-xl text-slate-800 tracking-tight">Study Hub</span>
-          </div>
+      <header className="bg-white border-b border-slate-200 px-6 md:px-10 py-4 flex justify-between items-center sticky top-0 z-20 shadow-sm">
+        <div className="cursor-pointer" onClick={resetApp}>
+          <UnispaceLogo />
         </div>
-        
         {fileName && (
-          <div className="hidden md:flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full border border-slate-200">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <span className="text-sm text-slate-600 truncate max-w-[150px]">{fileName}</span>
-            <button onClick={resetApp} className="text-slate-400 hover:text-red-500">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-            </button>
+          <div className="hidden md:flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-brand-green animate-pulse"></div>
+            <span className="text-sm font-bold text-slate-500 bg-slate-100 px-4 py-1.5 rounded-full border border-slate-200">{fileName}</span>
           </div>
         )}
       </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col items-center justify-start p-6 relative">
-        
+      <main className="flex-1 p-4 md:p-8 flex flex-col items-center">
         {loading && <LoadingView message={loadingMessage} />}
 
         {mode === AppMode.UPLOAD && (
-          <div className="flex flex-col items-center justify-center h-full w-full mt-10 animate-fade-in-up">
-            <h1 className="text-4xl font-extrabold text-slate-900 mb-3 text-center">Welcome to the Study Hub</h1>
-            <p className="text-slate-500 text-lg mb-10 text-center max-w-2xl">Your central space for learning. Upload materials, generate quizzes, and get answers instantly.</p>
+          <div className="mt-12 w-full max-w-4xl text-center animate-fade-in-up">
+            <h1 className="text-4xl md:text-6xl font-black text-brand-dark mb-6 tracking-tight leading-tight">
+              Master Any Course With <span className="text-brand-green">Unispace</span>
+            </h1>
+            <p className="text-slate-500 text-lg md:text-xl mb-12 max-w-2xl mx-auto font-medium">
+              Upload your PDF for interactive quizzes, targeted theoretical exams, and 1-on-1 AI tutoring.
+            </p>
             <FileUpload onFileSelect={handleFileSelect} />
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mt-16 max-w-4xl w-full">
-               <div className="text-center p-6">
-                 <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                    </svg>
-                 </div>
-                 <h3 className="font-bold text-slate-900">AI Quiz Generation</h3>
-                 <p className="text-slate-500 text-sm mt-2">Automatically create quizzes from your uploaded documents to test your knowledge.</p>
-               </div>
-               <div className="text-center p-6">
-                 <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                    </svg>
-                 </div>
-                 <h3 className="font-bold text-slate-900">Ask Your Document</h3>
-                 <p className="text-slate-500 text-sm mt-2">Get quick answers and summaries for specific questions about your study material.</p>
-               </div>
-            </div>
           </div>
         )}
 
         {mode === AppMode.MENU && (
-          <div className="w-full max-w-4xl mt-12 grid grid-cols-1 md:grid-cols-2 gap-8 animate-fade-in">
-            {/* Quiz Option */}
-            <div 
-              onClick={() => setMode(AppMode.QUIZ_SETUP)}
-              className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-green-400 transition-all cursor-pointer group flex flex-col items-center text-center"
-            >
-              <div className="bg-green-50 p-6 rounded-full mb-6 group-hover:scale-110 transition-transform duration-300">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                </svg>
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2">Start Quiz Session</h2>
-              <p className="text-slate-500">Test your knowledge with custom quizzes generated from your document. Get instant feedback and study tips.</p>
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-6xl mt-12 animate-fade-in">
+             <div onClick={() => setMode(AppMode.QUIZ_SETUP)} className="bg-white p-10 rounded-3xl border border-slate-200 hover:border-brand-green hover:shadow-2xl transition-all cursor-pointer group text-center">
+                <div className="bg-green-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform">
+                   <svg className="w-10 h-10 text-brand-green" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                </div>
+                <h3 className="text-2xl font-black text-brand-dark mb-4">Quiz Engine</h3>
+                <p className="text-slate-500 font-medium">Fast-paced MCQs and T/F questions to test recall.</p>
+             </div>
 
-            {/* Chat Option */}
-            <div 
-              onClick={startChat}
-              className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 hover:shadow-xl hover:border-emerald-400 transition-all cursor-pointer group flex flex-col items-center text-center"
-            >
-              <div className="bg-emerald-50 p-6 rounded-full mb-6 group-hover:scale-110 transition-transform duration-300">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-                </svg>
-              </div>
-              <h2 className="text-2xl font-bold text-slate-800 mb-2">Ask a Question</h2>
-              <p className="text-slate-500">Have a specific doubt? Chat with the AI tutor. It answers strictly based on the content of your PDF.</p>
-            </div>
+             <div onClick={() => setMode(AppMode.THEORY_SETUP)} className="bg-white p-10 rounded-3xl border border-slate-200 hover:border-brand-green hover:shadow-2xl transition-all cursor-pointer group text-center">
+                <div className="bg-green-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform">
+                   <svg className="w-10 h-10 text-brand-green" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                </div>
+                <h3 className="text-2xl font-black text-brand-dark mb-4">Theoretical Exam</h3>
+                <p className="text-slate-500 font-medium">Typed answers, compulsory sections, and keyword grading.</p>
+             </div>
+
+             <div onClick={() => setMode(AppMode.CHAT)} className="bg-white p-10 rounded-3xl border border-slate-200 hover:border-brand-green hover:shadow-2xl transition-all cursor-pointer group text-center">
+                <div className="bg-green-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-8 group-hover:scale-110 transition-transform">
+                   <svg className="w-10 h-10 text-brand-green" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                </div>
+                <h3 className="text-2xl font-black text-brand-dark mb-4">AI Tutor Chat</h3>
+                <p className="text-slate-500 font-medium">Ask questions directly to the document and get clear explanations.</p>
+             </div>
           </div>
         )}
 
-        {mode === AppMode.QUIZ_SETUP && (
-          <QuizSetup 
-            onStart={handleQuizSetupComplete} 
-            onCancel={() => setMode(AppMode.MENU)}
-          />
-        )}
-
-        {mode === AppMode.QUIZ && quizQuestions.length > 0 && quizSettings && (
-          <QuizView 
-            questions={quizQuestions}
-            settings={quizSettings}
-            fileName={fileName}
-            onComplete={handleQuizComplete} 
+        {mode === AppMode.QUIZ_SETUP && <QuizSetup onStart={handleQuizSetupComplete} onCancel={() => setMode(AppMode.MENU)} />}
+        {mode === AppMode.THEORY_SETUP && <TheorySetup topics={topics} onStart={handleTheorySetupComplete} onCancel={() => setMode(AppMode.MENU)} />}
+        
+        {mode === AppMode.QUIZ && <QuizView questions={quizQuestions} settings={quizSettings!} fileName={fileName} onComplete={handleQuizComplete} onExit={() => setMode(AppMode.MENU)} />}
+        {mode === AppMode.THEORY_EXAM && (
+          <TheoryView 
+            questions={theoryQuestions} 
+            topic={currentTheoryTopic} 
+            strategy={currentTheoryStrategy}
+            onComplete={handleTheoryComplete} 
             onExit={() => setMode(AppMode.MENU)} 
           />
         )}
-
-        {mode === AppMode.CHAT && (
-          <ChatView 
-            fileBase64={fileBase64} 
-            onExit={() => setMode(AppMode.MENU)} 
-          />
-        )}
-
-        {mode === AppMode.ANALYSIS && quizAnalysis && (
-          <AnalysisView 
-            analysis={quizAnalysis} 
-            questions={quizQuestions}
-            userAnswers={userAnswers}
-            onBack={() => setMode(AppMode.MENU)}
-            onRetake={handleRetakeQuiz}
-          />
-        )}
+        
+        {mode === AppMode.CHAT && <ChatView fileBase64={fileBase64} onExit={() => setMode(AppMode.MENU)} />}
+        
+        {mode === AppMode.ANALYSIS && quizAnalysis && <AnalysisView analysis={quizAnalysis} questions={quizQuestions} userAnswers={userAnswers} onBack={() => setMode(AppMode.MENU)} onRetake={() => setMode(AppMode.QUIZ_SETUP)} />}
+        {mode === AppMode.THEORY_ANALYSIS && theoryAnalysis && <TheoryAnalysisView analysis={theoryAnalysis} questions={theoryQuestions} onBack={() => setMode(AppMode.MENU)} />}
       </main>
     </div>
   );
