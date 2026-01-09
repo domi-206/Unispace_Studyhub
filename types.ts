@@ -8,7 +8,58 @@ export enum AppMode {
   ANALYSIS = 'ANALYSIS',
   THEORY_SETUP = 'THEORY_SETUP',
   THEORY_EXAM = 'THEORY_EXAM',
-  THEORY_ANALYSIS = 'THEORY_ANALYSIS'
+  THEORY_ANALYSIS = 'THEORY_ANALYSIS',
+  PODCAST_SETUP = 'PODCAST_SETUP',
+  PODCAST_VIEW = 'PODCAST_VIEW',
+  HISTORY = 'HISTORY'
+}
+
+export enum Accent {
+  NIGERIAN = 'Nigerian',
+  US = 'US',
+  UK = 'UK'
+}
+
+export enum Tone {
+  FRIENDLY = 'Friendly',
+  PROFESSIONAL = 'Professional',
+  TEACHER = 'Teacher',
+  FUNNY = 'Funny'
+}
+
+export interface TTSConfig {
+  accent: Accent;
+  tone: Tone;
+}
+
+export interface PodcastConfig extends TTSConfig {
+  hostType: 'single' | 'double';
+  hostNames: string[];
+  duration: number; // minutes
+  topic: string;
+}
+
+export interface PodcastResult {
+  id: string;
+  topic: string;
+  audioBase64?: string; // Optional for history/localStorage
+  transcript: string;
+  timestamp: number;
+}
+
+export interface QuizHistoryItem {
+  id: string;
+  fileName: string;
+  score: number;
+  timestamp: number;
+}
+
+export interface ChatHistoryItem {
+  id: string;
+  fileName: string;
+  preview: string;
+  timestamp: number;
+  messages: ChatMessage[];
 }
 
 export enum TheoryDifficulty {
@@ -49,6 +100,7 @@ export interface TheoryGradePart {
   feedback: string;
   missedKeywords: string[];
   correctAnswerReference: string;
+  pageNumber?: number;
 }
 
 export interface TheoryGrade {
@@ -58,7 +110,7 @@ export interface TheoryGrade {
 }
 
 export interface TheoryExamAnalysis {
-  finalScore: number; // Out of 70
+  finalScore: number; 
   passed: boolean;
   topicStrengths: string[];
   topicWeaknesses: string[];
@@ -68,7 +120,8 @@ export interface TheoryExamAnalysis {
 
 export enum QuestionType {
   MULTIPLE_CHOICE = 'MULTIPLE_CHOICE',
-  TRUE_FALSE = 'TRUE_FALSE'
+  TRUE_FALSE = 'TRUE_FALSE',
+  FILL_IN_THE_GAP = 'FILL_IN_THE_GAP'
 }
 
 export interface QuizSettings {
@@ -84,12 +137,15 @@ export interface QuizQuestion {
   type: QuestionType;
   options: string[];
   correctAnswerIndex: number;
+  correctAnswerText?: string; // For fill in the gap
   explanation?: string;
+  pageNumber?: number;
 }
 
 export interface UserAnswer {
   questionId: number;
   selectedOptionIndex: number;
+  textAnswer?: string; // For fill in the gap
   isCorrect: boolean;
 }
 
@@ -114,6 +170,7 @@ export interface ChatMessage {
   text: string;
   isThinking?: boolean;
   isEdited?: boolean;
+  pageReferences?: number[];
   replyTo?: {
     id: string;
     text: string;

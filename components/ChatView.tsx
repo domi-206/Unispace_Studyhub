@@ -1,376 +1,279 @@
+
 import React, { useState, useRef, useEffect } from 'react';
-import { ChatMessage } from '../types';
-import { chatWithPdf } from '../services/geminiService';
+import { ChatMessage, Accent, Tone, TTSConfig, ChatHistoryItem } from '../types';
+import { chatWithPdfStream, generateSpeech, playRawPcm } from '../services/geminiService';
+import { PdfViewer } from './PdfViewer';
 
 interface ChatViewProps {
   fileBase64: string;
+  initialHistory?: ChatMessage[];
   onExit: () => void;
+  onUpdateHistory?: (messages: ChatMessage[]) => void;
+  chatHistory: ChatHistoryItem[];
+  onSelectChat: (chat: ChatHistoryItem) => void;
+  onNewChat: () => void;
 }
 
-export const ChatView: React.FC<ChatViewProps> = ({ fileBase64, onExit }) => {
+export const ChatView: React.FC<ChatViewProps> = ({ 
+  fileBase64, initialHistory, onExit, onUpdateHistory, chatHistory, onSelectChat, onNewChat 
+}) => {
   const INITIAL_MESSAGE: ChatMessage = { 
     id: '1', 
     role: 'model', 
-    text: 'Hello! Ask me anything about your PDF document.' 
+    text: 'Hello! I am your Unispace Assistant. Ask me anything about your document.' 
   };
 
-  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
+  const [messages, setMessages] = useState<ChatMessage[]>(initialHistory || [INITIAL_MESSAGE]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isAnimating, setIsAnimating] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+  const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   
-  // Feature States
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editText, setEditText] = useState('');
-  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [ttsConfig, setTtsConfig] = useState<TTSConfig>({ accent: Accent.US, tone: Tone.FRIENDLY });
+  const [showTTSMenu, setShowTTSMenu] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
+  const [selectedPage, setSelectedPage] = useState<number | undefined>(undefined);
+  const [showPdfModal, setShowPdfModal] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (initialHistory) {
+      setMessages(initialHistory);
+    } else {
+      setMessages([INITIAL_MESSAGE]);
     }
-  }, [messages, editingId, replyingTo]);
+  }, [initialHistory]);
 
-  // --- Actions ---
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (onUpdateHistory && messages.length > 1) onUpdateHistory(messages);
+  }, [messages, isLoading]);
 
-  const handleRefresh = () => {
-    setMessages([INITIAL_MESSAGE]);
-    setInput('');
-    setReplyingTo(null);
-    setEditingId(null);
+  const handlePageClick = (page: number) => {
+    setSelectedPage(page);
+    setShowPdfModal(true);
   };
 
-  const handleCopy = (text: string) => {
-    navigator.clipboard.writeText(text);
-  };
-
-  const handleDelete = (id: string) => {
-    if (window.confirm("Are you sure you want to delete this message?")) {
-      setMessages(prev => prev.filter(m => m.id !== id));
+  const speakText = async (text: string, msgId: string) => {
+    if (isSpeaking) {
+      audioSourceRef.current?.stop();
+      setIsSpeaking(null);
+      return;
+    }
+    setIsSpeaking(msgId);
+    try {
+      const audioBase64 = await generateSpeech(text, ttsConfig);
+      const result = await playRawPcm(audioBase64);
+      if (result) {
+        const source = result.audioCtx.createBufferSource();
+        source.buffer = result.audioBuffer;
+        source.connect(result.audioCtx.destination);
+        audioSourceRef.current = source;
+        source.onended = () => setIsSpeaking(null);
+        source.start(0);
+      }
+    } catch (e) {
+      console.error("Unispace TTS Error:", e);
+      setIsSpeaking(null);
     }
   };
-
-  // --- Reply Logic ---
-
-  const handleStartReply = (msg: ChatMessage) => {
-    setReplyingTo(msg);
-    inputRef.current?.focus();
-  };
-
-  const handleCancelReply = () => {
-    setReplyingTo(null);
-  };
-
-  // --- Edit Logic ---
-
-  const handleStartEdit = (msg: ChatMessage) => {
-    setEditingId(msg.id);
-    setEditText(msg.text);
-  };
-
-  const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditText('');
-  };
-
-  const handleSaveEdit = (id: string) => {
-    if (!editText.trim()) return;
-    setMessages(prev => prev.map(m => 
-      m.id === id ? { ...m, text: editText, isEdited: true } : m
-    ));
-    setEditingId(null);
-  };
-
-  // --- Send Logic ---
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+    
+    setIsSending(true);
+    // Reset animation state after it completes
+    setTimeout(() => setIsSending(false), 600); 
 
-    // Trigger Animation
-    setIsAnimating(true);
-    setTimeout(() => setIsAnimating(false), 600);
-
-    const userMessage: ChatMessage = {
-      id: Date.now().toString(),
-      role: 'user',
-      text: input,
-      replyTo: replyingTo ? {
-        id: replyingTo.id,
-        text: replyingTo.text,
-        role: replyingTo.role
-      } : undefined
-    };
-
+    const userMessage: ChatMessage = { id: Date.now().toString(), role: 'user', text: input };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
-    setReplyingTo(null); // Clear reply state
     setIsLoading(true);
 
-    // Prepare history for API
-    const history = messages.map(m => {
-        let content = m.text;
-        if (m.replyTo) {
-            content = `[Replying to "${m.replyTo.text.substring(0, 50)}..."]: ${m.text}`;
-        }
-        return {
-            role: m.role,
-            parts: [{ text: content }]
-        };
-    });
-    
-    let currentMessageText = userMessage.text;
-    if (userMessage.replyTo) {
-        currentMessageText = `[Replying to "${userMessage.replyTo.text.substring(0, 50)}..."]: ${userMessage.text}`;
-    }
+    const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+    const aiMessageId = (Date.now() + 1).toString();
+    setMessages(prev => [...prev, { id: aiMessageId, role: 'model', text: '' }]);
 
-    const responseText = await chatWithPdf(fileBase64, history, currentMessageText);
-
-    const aiMessage: ChatMessage = {
-      id: (Date.now() + 1).toString(),
-      role: 'model',
-      text: responseText
-    };
-
-    setMessages(prev => [...prev, aiMessage]);
-    setIsLoading(false);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+    try {
+      const { text, pages } = await chatWithPdfStream(fileBase64, history, userMessage.text, (chunkText) => {
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: chunkText } : m));
+      });
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: text, pageReferences: pages } : m));
+    } catch (e) {
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: "Unispace encountered an error." } : m));
+    } finally {
+      setIsLoading(false);
     }
   };
-
-  // --- Render Helpers ---
 
   const formatText = (text: string) => {
-    const paragraphs = text.split(/\n\s*\n/);
-    return paragraphs.map((para, i) => {
-      if (para.trim().startsWith('*') || para.trim().startsWith('-')) {
-        const items = para.split(/\n/).filter(line => line.trim().length > 0);
-        return (
-          <ul key={i} className="list-disc ml-5 mb-3 space-y-1">
-            {items.map((item, j) => {
-               const cleanItem = item.replace(/^[\*\-]\s*/, '');
-               return <li key={j} dangerouslySetInnerHTML={{ __html: parseBold(cleanItem) }} />;
-            })}
-          </ul>
-        );
-      }
-      return (
-        <p key={i} className="mb-3 last:mb-0" dangerouslySetInnerHTML={{ __html: parseBold(para) }} />
-      );
+    if (!text) return <div className="flex gap-1 items-center"><span className="w-1.5 h-1.5 bg-brand-green rounded-full animate-bounce"></span><span className="w-1.5 h-1.5 bg-brand-green rounded-full animate-bounce [animation-delay:0.2s]"></span><span className="w-1.5 h-1.5 bg-brand-green rounded-full animate-bounce [animation-delay:0.4s]"></span></div>;
+    const citedText = text.replace(/\[Page\s*(\d+)\]/gi, (match, p1) => {
+      return `<button class="inline-flex items-center gap-1 bg-brand-green/10 text-brand-green px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-tighter hover:bg-brand-green hover:text-white transition-all mx-1" onclick="window.dispatchEvent(new CustomEvent('jumpToPage', {detail: ${p1}}))">Page ${p1}</button>`;
     });
+    return citedText.split(/\n\s*\n/).map((para, i) => (
+      <p key={i} className="mb-4 last:mb-0" dangerouslySetInnerHTML={{ __html: para.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>') }} />
+    ));
   };
 
-  const parseBold = (text: string) => {
-    return text.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold opacity-100">$1</strong>');
-  };
+  useEffect(() => {
+    const handleJump = (e: any) => handlePageClick(e.detail);
+    window.addEventListener('jumpToPage', handleJump);
+    return () => window.removeEventListener('jumpToPage', handleJump);
+  }, []);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-100px)] max-w-4xl mx-auto w-full bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden relative">
-      <div className="bg-slate-50 border-b border-slate-200 p-4 flex justify-between items-center z-10">
-        <h2 className="font-bold text-slate-700 flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-green-500"></span>
-          Document Chat
-        </h2>
-        <div className="flex gap-2">
-          <button 
-            onClick={handleRefresh} 
-            className="text-xs font-bold text-slate-600 hover:text-green-700 px-4 py-2 rounded-lg bg-white border border-slate-200 hover:border-green-300 hover:bg-green-50 transition-colors flex items-center gap-2 shadow-sm"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-            </svg>
-            Restart Chat
-          </button>
-          <button onClick={onExit} className="text-xs font-bold text-slate-500 hover:text-slate-800 px-4 py-2 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 shadow-sm">
-            Exit
-          </button>
+    <div className="flex flex-col h-[calc(100vh-120px)] max-w-6xl mx-auto w-full animate-fade-in relative px-4">
+      <div className="flex h-full bg-white rounded-[2rem] shadow-2xl border border-slate-200 overflow-hidden relative">
+        
+        {/* Sidebar */}
+        <div className={`absolute md:relative inset-y-0 left-0 w-72 bg-slate-50 border-r border-slate-200 z-30 transition-transform duration-500 transform ${showSidebar ? 'translate-x-0 shadow-2xl' : '-translate-x-full md:translate-x-0'}`}>
+           <div className="p-6 border-b bg-white flex justify-between items-center">
+              <span className="font-black text-[11px] text-slate-400 uppercase tracking-widest">Tutoring Vault</span>
+              <button onClick={() => setShowSidebar(false)} className="md:hidden text-slate-400">✕</button>
+           </div>
+           <div className="p-6 space-y-4">
+              <button 
+                onClick={() => { onNewChat(); setShowSidebar(false); }}
+                className="w-full py-4 bg-brand-dark text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-black transition-all shadow-lg flex items-center justify-center gap-2 group"
+              >
+                <svg className="w-4 h-4 group-hover:rotate-90 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M12 4v16m8-8H4" /></svg>
+                New Session
+              </button>
+              
+              <div className="space-y-3 overflow-y-auto max-h-[calc(100vh-320px)] pr-2 custom-scrollbar">
+                 {chatHistory.map((item) => (
+                   <button 
+                     key={item.id}
+                     onClick={() => { onSelectChat(item); setShowSidebar(false); }}
+                     className="w-full text-left p-4 rounded-2xl border border-slate-100 bg-white hover:border-brand-green hover:shadow-md transition-all group"
+                   >
+                     <p className="font-bold text-xs text-slate-800 truncate mb-1">{item.fileName}</p>
+                     <p className="text-[10px] text-slate-400 truncate opacity-60 group-hover:opacity-100">{item.preview}</p>
+                   </button>
+                 ))}
+                 {chatHistory.length === 0 && <p className="text-[10px] text-slate-400 italic text-center py-10">Empty session history</p>}
+              </div>
+           </div>
         </div>
-      </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-slate-50/50" ref={scrollRef}>
-        {messages.map((msg) => {
-            const isUser = msg.role === 'user';
-            const isEditing = editingId === msg.id;
-
-            return (
-              <div key={msg.id} className={`flex w-full ${isUser ? 'justify-end' : 'justify-start'}`}>
-                <div className={`relative max-w-[90%] md:max-w-[80%] min-w-[300px] transition-all`}>
-                  
-                  {/* Message Bubble */}
-                  <div 
-                    className={`rounded-3xl shadow-sm overflow-hidden border
-                    ${isUser 
-                      ? 'bg-gradient-to-br from-green-500 to-green-600 text-white border-green-400 rounded-br-none' 
-                      : 'bg-white text-slate-700 border-slate-200 rounded-bl-none'}`}
-                  >
-                    <div className="p-6">
-                        {/* Reply Context Visualization */}
-                        {msg.replyTo && !isEditing && (
-                            <div className={`mb-4 text-xs p-3 rounded-xl border-l-4
-                                ${isUser ? 'bg-green-700/30 border-green-200 text-green-50' : 'bg-slate-50 border-green-400 text-slate-500'}`}>
-                                <div className="font-bold mb-1 flex items-center gap-1.5 opacity-80">
-                                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
-                                    Replying to {msg.replyTo.role === 'user' ? 'You' : 'AI'}
-                                </div>
-                                <div className="truncate line-clamp-1 italic opacity-90">"{msg.replyTo.text}"</div>
-                            </div>
-                        )}
-
-                        {/* Content / Edit Mode */}
-                        {isEditing ? (
-                            <div className="w-full bg-white/10 rounded-xl p-1">
-                                <textarea 
-                                    value={editText}
-                                    onChange={(e) => setEditText(e.target.value)}
-                                    className="w-full p-3 text-slate-800 bg-white rounded-lg border-2 border-green-300 focus:border-green-500 outline-none min-h-[100px] shadow-inner"
-                                />
-                                <div className="flex justify-end gap-2 mt-3">
-                                    <button onClick={handleCancelEdit} className="text-xs px-4 py-2 rounded-lg font-bold bg-black/20 hover:bg-black/30 text-white transition-colors">Cancel</button>
-                                    <button onClick={() => handleSaveEdit(msg.id)} className="text-xs px-4 py-2 bg-white text-green-700 font-bold rounded-lg shadow-lg hover:scale-105 transition-transform">Save Changes</button>
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="text-base leading-7">
-                                {msg.role === 'model' ? formatText(msg.text) : <p className="whitespace-pre-wrap">{msg.text}</p>}
-                                {msg.isEdited && (
-                                    <span className={`text-[10px] block text-right mt-2 opacity-60 font-medium italic ${isUser ? 'text-green-100' : 'text-slate-400'}`}>
-                                        (edited)
-                                    </span>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    {/* ALWAYS VISIBLE ACTION FOOTER */}
-                    {!isEditing && (
-                        <div className={`px-4 py-3 border-t flex items-center gap-2 flex-wrap
-                           ${isUser 
-                              ? 'bg-green-700/20 border-white/20' 
-                              : 'bg-slate-50 border-slate-100'}`}>
-                           
-                           {/* Reply Button */}
-                           <button 
-                              onClick={() => handleStartReply(msg)}
-                              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all transform hover:scale-105
-                                ${isUser 
-                                   ? 'text-green-50 hover:bg-white/20' 
-                                   : 'text-slate-500 hover:text-green-600 hover:bg-green-50'}`}
-                           >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
-                              Reply
-                           </button>
-
-                           {/* Copy Button */}
-                           <button 
-                              onClick={() => handleCopy(msg.text)}
-                              className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition-all transform hover:scale-105
-                                ${isUser 
-                                   ? 'text-green-50 hover:bg-white/20' 
-                                   : 'text-slate-500 hover:text-blue-600 hover:bg-blue-50'}`}
-                           >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" /></svg>
-                              Copy
-                           </button>
-
-                           {/* User Only Actions */}
-                           {isUser && (
-                              <>
-                                <div className="w-px h-4 bg-white/20 mx-1"></div>
-                                <button 
-                                   onClick={() => handleStartEdit(msg)}
-                                   className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold text-green-50 hover:bg-white/20 transition-all transform hover:scale-105"
-                                >
-                                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
-                                   Edit
-                                </button>
-                                <button 
-                                   onClick={() => handleDelete(msg.id)}
-                                   className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold text-red-100 hover:bg-red-500/20 hover:text-white transition-all transform hover:scale-105"
-                                >
-                                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
-                                   Delete
-                                </button>
-                              </>
-                           )}
-                        </div>
-                    )}
-                  </div>
-
+        {/* Chat Feed */}
+        <div className="flex-1 flex flex-col min-w-0 bg-slate-50/20">
+          <div className="bg-white/80 backdrop-blur-md border-b p-4 md:p-6 flex justify-between items-center z-10 sticky top-0">
+            <div className="flex items-center gap-4">
+              <button onClick={() => setShowSidebar(!showSidebar)} className="md:hidden p-3 text-slate-500 bg-slate-100 border border-slate-200 rounded-xl hover:bg-slate-200 transition-all">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+              </button>
+              <div>
+                <h2 className="font-black text-brand-dark flex items-center gap-2 text-lg md:text-xl">Unispace Tutor</h2>
+                <div className="flex items-center gap-2 mt-0.5">
+                   <div className="w-2 h-2 rounded-full bg-brand-green animate-pulse"></div>
+                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Live Sync</span>
                 </div>
               </div>
-            );
-        })}
-        
-        {isLoading && (
-          <div className="flex justify-start">
-            <div className="bg-white border border-slate-100 p-6 rounded-3xl rounded-bl-none flex items-center gap-2 shadow-md">
-              <span className="text-slate-400 text-xs font-bold uppercase tracking-wider mr-2">Thinking</span>
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce"></div>
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce delay-100"></div>
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-bounce delay-200"></div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowTTSMenu(!showTTSMenu)} className="text-[10px] font-black text-slate-500 bg-white border border-slate-200 px-4 py-2 rounded-xl uppercase hover:border-brand-green hover:text-brand-green transition-all shadow-sm">Voice</button>
+              <button onClick={onExit} className="text-[10px] font-black text-slate-400 bg-slate-100 px-4 py-2 rounded-xl uppercase hover:bg-slate-200 transition-all">Exit</button>
             </div>
           </div>
-        )}
-      </div>
 
-      <div className="p-4 bg-white border-t border-slate-100 shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] z-20">
-        <div className="relative max-w-3xl mx-auto">
-          
-          {/* Enhanced Reply Banner */}
-          {replyingTo && (
-              <div className="mb-4 bg-white/80 backdrop-blur-sm p-4 rounded-xl border-l-4 border-green-500 shadow-lg animate-fade-in-up flex justify-between items-center ring-1 ring-slate-100">
-                  <div className="flex items-center gap-4 overflow-hidden">
-                      <div className="p-2 bg-green-100 rounded-full text-green-600">
-                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" /></svg>
+          <div className="flex-1 overflow-y-auto p-6 md:p-10 space-y-8" ref={scrollRef}>
+            {messages.map((msg) => (
+              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+                <div className={`max-w-[88%] md:max-w-[75%] p-6 rounded-[2rem] shadow-sm relative ${msg.role === 'user' ? 'bg-brand-green text-white rounded-tr-none shadow-brand-green/10' : 'bg-white text-slate-800 rounded-tl-none border border-slate-200'}`}>
+                  {msg.role === 'model' ? formatText(msg.text) : <p className="whitespace-pre-wrap font-medium text-lg">{msg.text}</p>}
+                  {msg.role === 'model' && msg.text && (
+                    <button onClick={() => speakText(msg.text, msg.id)} className={`mt-4 flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] transition-all hover:scale-105 ${isSpeaking === msg.id ? 'text-brand-green animate-pulse' : 'text-slate-400 hover:text-brand-green'}`}>
+                      <div className="w-6 h-6 rounded-lg bg-slate-50 flex items-center justify-center border border-slate-100 group-hover:bg-brand-green/10">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M9.383 3.076A1 1 0 0110 4v12a1 1 0 01-1.707.707L4.586 13H2a1 1 0 01-1-1V8a1 1 0 011-1h2.586l3.707-3.707a1 1 0 011.09-.217z" clipRule="evenodd" /></svg>
                       </div>
-                      <div className="flex flex-col">
-                          <span className="font-bold text-slate-800 text-sm uppercase tracking-wide">Replying to {replyingTo.role === 'user' ? 'yourself' : 'AI Assistant'}</span>
-                          <span className="text-slate-500 text-sm truncate max-w-[200px] md:max-w-md italic">"{replyingTo.text}"</span>
-                      </div>
-                  </div>
-                  <button onClick={handleCancelReply} className="p-2 hover:bg-slate-100 rounded-full text-slate-400 hover:text-red-500 transition-colors">
-                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                  </button>
+                      {isSpeaking === msg.id ? 'Stop Playback' : 'Read Session'}
+                    </button>
+                  )}
+                </div>
               </div>
-          )}
+            ))}
+            {isLoading && (
+               <div className="flex items-center gap-3 ml-2">
+                  <span className="text-[11px] font-black text-slate-400 uppercase tracking-widest animate-pulse">Syncing with document...</span>
+               </div>
+            )}
+          </div>
 
-          <div className="relative group">
-              <input
-                ref={inputRef}
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask a question about the document..."
-                className="w-full pl-6 pr-16 py-5 bg-slate-800 text-white placeholder-slate-400 rounded-full border-2 border-transparent focus:border-green-500 focus:ring-4 focus:ring-green-500/20 outline-none transition-all shadow-xl font-medium"
-                disabled={isLoading}
+          <div className="p-6 md:p-8 bg-white border-t border-slate-100">
+            <div className="relative group max-w-4xl mx-auto">
+              <input 
+                type="text" 
+                value={input} 
+                onChange={e => setInput(e.target.value)} 
+                onKeyDown={e => e.key === 'Enter' && handleSend()} 
+                placeholder="Message your document..." 
+                className="w-full p-6 pr-20 bg-slate-900 text-white rounded-3xl outline-none font-medium placeholder-slate-500 focus:ring-4 focus:ring-brand-green/20 transition-all shadow-2xl text-lg" 
               />
               <button 
-                onClick={handleSend}
+                onClick={handleSend} 
                 disabled={!input.trim() || isLoading}
-                className="absolute right-2 top-2 bottom-2 aspect-square bg-gradient-to-br from-green-500 to-green-600 text-white rounded-full hover:from-green-400 hover:to-green-500 disabled:from-slate-600 disabled:to-slate-700 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-green-500/50 hover:scale-105 active:scale-95 flex items-center justify-center overflow-hidden z-10"
+                className={`absolute right-3 top-3 bottom-3 aspect-square bg-brand-green text-white rounded-2xl transition-all flex items-center justify-center shadow-lg
+                  ${input.trim() && !isLoading ? 'hover:bg-green-600 active:scale-90' : 'opacity-20 cursor-not-allowed'}`}
               >
-                <div className={`transition-all duration-500 transform ${isAnimating ? '-translate-y-[200%] opacity-0' : 'translate-y-0 opacity-100'}`}>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                 <div className={isSending ? 'animate-send-up' : 'transition-transform group-hover:-translate-y-1'}>
+                    <svg className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 10l7-7m0 0l7 7m-7-7v18" />
                     </svg>
-                </div>
-                
-                <div className={`absolute inset-0 flex items-center justify-center transition-all duration-500 transform ${isAnimating ? 'translate-y-0 opacity-100 delay-300' : 'translate-y-[200%] opacity-0'}`}>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 ml-0.5" viewBox="0 0 20 20" fill="currentColor">
-                      <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                  </svg>
-                </div>
+                 </div>
               </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {showTTSMenu && (
+        <div className="absolute top-24 right-8 w-64 bg-white border border-slate-200 rounded-[2rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.15)] p-6 z-50 animate-fade-in-up">
+           <p className="text-[11px] font-black text-slate-400 uppercase mb-6 tracking-widest text-center border-b border-slate-50 pb-4">Voice Personalization</p>
+           <div className="space-y-5">
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-2 tracking-widest">Region</label>
+                <select value={ttsConfig.accent} onChange={e => setTtsConfig({...ttsConfig, accent: e.target.value as Accent})} className="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none hover:border-brand-green transition-colors">
+                  {Object.values(Accent).map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] font-black text-slate-400 uppercase block mb-2 tracking-widest">Cognitive Tone</label>
+                <select value={ttsConfig.tone} onChange={e => setTtsConfig({...ttsConfig, tone: e.target.value as Tone})} className="w-full text-xs font-bold p-3 bg-slate-50 border border-slate-100 rounded-xl outline-none hover:border-brand-green transition-colors">
+                  {Object.values(Tone).map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <button onClick={() => setShowTTSMenu(false)} className="w-full py-4 bg-brand-dark text-white text-[10px] font-black uppercase rounded-xl hover:bg-black transition-all shadow-lg mt-2">Sync Voice</button>
+           </div>
+        </div>
+      )}
+
+      {showPdfModal && (
+        <div className="fixed inset-0 z-[100] bg-brand-dark/95 flex flex-col animate-fade-in backdrop-blur-xl">
+           <div className="p-6 flex justify-between items-center text-white border-b border-white/10">
+              <div className="flex items-center gap-4">
+                 <div className="w-10 h-10 rounded-xl bg-red-600 flex items-center justify-center font-black text-sm">PDF</div>
+                 <div>
+                    <span className="font-black text-base uppercase tracking-widest block leading-none">Reference Vault</span>
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Viewing Page {selectedPage}</span>
+                 </div>
+              </div>
+              <button 
+                onClick={() => setShowPdfModal(false)} 
+                className="px-8 py-3 bg-red-600 hover:bg-red-700 text-white rounded-full font-black text-xs transition-all uppercase flex items-center gap-3 shadow-2xl ring-8 ring-red-600/10 active:scale-95"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" /></svg>
+                Cancel Review
+              </button>
+           </div>
+           <div className="flex-1 p-4 md:p-10">
+              <PdfViewer base64={fileBase64} page={selectedPage} />
+           </div>
+        </div>
+      )}
     </div>
   );
 };
